@@ -21,6 +21,7 @@
 		return $report;
 	}
 
+	<<__Native("ZendCompat")>> function getProfilerMemoryReport(): mixed;
 	<<__Native("ZendCompat")>> function callFunction(mixed $name): mixed;
 	<<__Native("ZendCompat")>> function wrapPhpFunction(mixed $name, mixed $function): mixed;
 	<<__Native("ZendCompat")>> function registerLibrary(mixed $libname, mixed $functions): mixed;

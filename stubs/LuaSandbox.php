@@ -160,6 +160,9 @@ class LuaSandbox {
 	public function getProfilerFunctionReport( $units = LuaSandbox::SECONDS ) {
 	}
 
+	public function getProfilerMemoryReport( ) {
+	}
+
 	/**
 	 * Call a function in a Lua global variable
 	 *
