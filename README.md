@@ -4,3 +4,12 @@ be faster than shelling out to a Lua binary and using inter-process
 communication.
 
 For more details see <https://www.mediawiki.org/wiki/LuaSandbox>.
+
+
+
+Branch [memory-profiling]
+Designed to be used with <https://github.com/ziplantil/mediawiki-extensions-Scribunto/tree/memory-profiling>.
+Adds a simple memory profiler.
+
+
+

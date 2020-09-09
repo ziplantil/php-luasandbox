@@ -73,6 +73,7 @@ static void luasandbox_handle_error(php_luasandbox_obj * sandbox, int status TSR
 static int luasandbox_dump_writer(lua_State * L, const void * p, size_t sz, void * ud);
 static zend_bool luasandbox_instanceof(
 	zend_class_entry *child_class, zend_class_entry *parent_class);
+static void luasandbox_memory_hook(lua_State *L, lua_Debug *ar);
 
 extern char luasandbox_timeout_message[];
 
@@ -149,6 +150,9 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_luasandbox_getProfilerFunctionReport, 0, 0, 0)
 	ZEND_ARG_INFO(0, units)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO_EX(arginfo_luasandbox_getProfilerMemoryReport, 0, 0, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_INFO_EX(arginfo_luasandbox_callFunction, 0, 0, 1)
 	ZEND_ARG_INFO(0, name)
 #ifdef ZEND_ARG_VARIADIC_INFO
@@ -208,6 +212,7 @@ const zend_function_entry luasandbox_methods[] = {
 #else
 	PHP_ME(LuaSandbox, getProfilerFunctionReport, arginfo_luasandbox_getProfilerFunctionReport, 0)
 #endif
+	PHP_ME(LuaSandbox, getProfilerMemoryReport, arginfo_luasandbox_getProfilerMemoryReport, 0)
 	PHP_ME(LuaSandbox, callFunction, arginfo_luasandbox_callFunction, 0)
 	PHP_ME(LuaSandbox, wrapPhpFunction, arginfo_luasandbox_wrapPhpFunction, 0)
 	PHP_ME(LuaSandbox, registerLibrary, arginfo_luasandbox_registerLibrary, 0)
@@ -396,6 +401,12 @@ static object_constructor_ret_t luasandbox_new(zend_class_entry *ce TSRMLS_DC)
 #else
 	sandbox = (php_luasandbox_obj*)zend_object_alloc(sizeof(php_luasandbox_obj), ce);
 #endif
+#if LUASANDBOX_MEMORY_PROFILING
+        sandbox->current_fname = ecalloc(256, sizeof(char));
+	ALLOC_HASHTABLE(sandbox->function_memory);
+	zend_hash_init(sandbox->function_memory, 256, NULL, NULL, 0);
+	strcpy(sandbox->current_fname, "<<initial>>");
+#endif
 
 	zend_object_std_init(&sandbox->std, ce TSRMLS_CC);
 #if PHP_VERSION_ID > 50399
@@ -459,6 +470,9 @@ static lua_State * luasandbox_newstate(php_luasandbox_obj * intern TSRMLS_DC)
 	lua_pushlightuserdata(L, (void*)intern);
 	lua_setfield(L, LUA_REGISTRYINDEX, "php_luasandbox_obj");
 
+#if LUASANDBOX_MEMORY_PROFILING
+	lua_sethook(L, luasandbox_memory_hook, LUA_MASKCALL | LUA_MASKRET, 1);
+#endif
 	return L;
 }
 /* }}} */
@@ -471,6 +485,15 @@ static void luasandbox_free_storage(zend_object *object TSRMLS_DC)
 {
 	php_luasandbox_obj * sandbox = php_luasandbox_fetch_object(object);
 
+#if LUASANDBOX_MEMORY_PROFILING
+	if (sandbox->function_memory)
+	{
+		zend_hash_destroy(sandbox->function_memory);
+		FREE_HASHTABLE(sandbox->function_memory);
+	}
+	if (sandbox->current_fname)
+        	efree(sandbox->current_fname);
+#endif
 	luasandbox_timer_destroy(&sandbox->timer);
 	if (sandbox->state) {
 		luasandbox_alloc_delete_state(&sandbox->alloc, sandbox->state);
@@ -1230,6 +1253,51 @@ PHP_METHOD(LuaSandbox, getProfilerFunctionReport)
 
 /* }}} */
 
+/** {{{ LuaSandbox::getProfilerMemoryReport */
+PHP_METHOD(LuaSandbox, getProfilerMemoryReport)
+{
+#if LUASANDBOX_MEMORY_PROFILING
+	php_luasandbox_obj * sandbox = GET_LUASANDBOX_OBJ(getThis());
+	HashTable * counts = sandbox->function_memory;
+	if (!counts) {
+		array_init(return_value);
+		return;
+	}
+	array_init_size(return_value, zend_hash_num_elements(counts));
+
+#if PHP_VERSION_ID < 70000
+	HashPosition p;
+	for (zend_hash_internal_pointer_reset_ex(counts, &p);
+			zend_hash_get_current_key_type_ex(counts, &p) != HASH_KEY_NON_EXISTANT;
+			zend_hash_move_forward_ex(counts, &p))
+	{
+		ptrdiff_t *count;
+		char * func_name = "";
+		uint func_name_length = 0;
+		ulong lkey;
+
+		zend_hash_get_current_key_ex(counts, &func_name, &func_name_length,
+				&lkey, 0, &p);
+		zend_hash_get_current_data_ex(counts, (void**)&count, &p);
+		add_assoc_long_ex(return_value, func_name, func_name_length, *count);
+	}
+#else
+	zend_string *key;
+	zval *count, v;
+	ZVAL_NULL(&v);
+	ZEND_HASH_FOREACH_STR_KEY_VAL(counts, key, count)
+	{
+		zend_hash_add(Z_ARRVAL_P(return_value), key, count);
+	} ZEND_HASH_FOREACH_END();
+#endif
+
+#else
+	array_init(return_value);
+#endif
+}
+
+/* }}} */
+
 /** {{{ LuaSandbox::getMemoryUsage */
 PHP_METHOD(LuaSandbox, getMemoryUsage)
 {
@@ -1592,8 +1660,10 @@ int luasandbox_call_lua(php_luasandbox_obj * sandbox, zval * sandbox_zval,
 		if (luasandbox_timer_start(&sandbox->timer)) {
 			timer_started = 1;
 		} else {
+#ifndef LXSS
 			php_error_docref(NULL TSRMLS_CC, E_WARNING,
 				"Unable to start limit timer");
+#endif
 		}
 	}
 
@@ -1644,6 +1714,50 @@ int luasandbox_call_lua(php_luasandbox_obj * sandbox, zval * sandbox_zval,
 	return 1;
 }
 /* }}} */
+
+static void luasandbox_update_current_fname(lua_Debug * dbg, php_luasandbox_obj * sandbox)
+{
+	// is this module code?
+	if (strncmp(dbg->short_src, "Mod", 3)) return;
+	strncpy(sandbox->current_fname, dbg->short_src, 100);
+        strcat(sandbox->current_fname, " : ");
+	if (*dbg->namewhat)
+	        strncat(sandbox->current_fname, dbg->name, 100);
+	else
+	{
+		strcat(sandbox->current_fname, "<");
+		strcat(sandbox->current_fname, dbg->what);
+		strcat(sandbox->current_fname, " at line ");
+		char tempbuf[14];
+		sprintf(tempbuf, "%d", dbg->linedefined);
+		strcat(sandbox->current_fname, tempbuf);
+		strcat(sandbox->current_fname, ">");
+	}
+}
+
+static void luasandbox_memory_hook(lua_State *L, lua_Debug *ar)
+{
+#if LUASANDBOX_MEMORY_PROFILING
+	php_luasandbox_obj * sandbox = luasandbox_get_php_obj(L);
+	switch (ar->event)
+	{
+	case LUA_HOOKCALL:
+		lua_getstack(L, 0, ar);
+		lua_getinfo(L, "nSl", ar);
+		luasandbox_update_current_fname(ar, sandbox);
+		break;
+	case LUA_HOOKRET:
+		lua_getstack(L, 1, ar);
+		lua_getinfo(L, "nSl", ar);
+		luasandbox_update_current_fname(ar, sandbox);
+		break;
+	case LUA_HOOKTAILRET:
+/*		if (strlen(sandbox->current_fname) < 253)
+			strcat(sandbox->current_fname, "$");*/
+		break;
+	}
+#endif
+}
 
 /** {{{ luasandbox_call_helper
  *

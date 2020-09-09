@@ -3,6 +3,7 @@
 
 #include <semaphore.h>
 #include "php.h"
+#include "luasandbox_version.h"
 
 #ifdef CLOCK_REALTIME
 
@@ -88,6 +89,10 @@ struct _php_luasandbox_obj {
 	int is_cpu_limited;
 	luasandbox_timer_set timer;
 	int function_index;
+#if LUASANDBOX_MEMORY_PROFILING
+        char * current_fname;
+        HashTable * function_memory;
+#endif
 	unsigned int random_seed;
 	int allow_pause;
 #if PHP_VERSION_ID >= 70000

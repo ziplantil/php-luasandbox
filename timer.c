@@ -18,6 +18,11 @@
 
 char luasandbox_timeout_message[] = "The maximum execution time for this script was exceeded";
 
+#ifdef LUASANDBOX_MEMORY_PROFILING
+// disable timer hooks if memory profiling is on
+#define lua_sethook(...) ;
+#endif
+
 #ifdef LUASANDBOX_NO_CLOCK
 
 void luasandbox_timer_minit(TSRMLS_D) {}
@@ -516,8 +521,10 @@ static luasandbox_timer * luasandbox_timer_create_one(
 
 	if (timer_create(lt->clock_id, &ev, &lt->timer) != 0) {
 		TSRMLS_FETCH();
+#ifndef LXSS
 		php_error_docref(NULL TSRMLS_CC, E_WARNING,
 			"Unable to create timer: %s", strerror(errno));
+#endif
 		luasandbox_timer_free(lt);
 		return NULL;
 	}

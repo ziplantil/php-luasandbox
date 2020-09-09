@@ -3,6 +3,8 @@
 
 #include "luasandbox_types.h"
 
+#define LXSS 1
+
 #ifdef CLOCK_REALTIME
 
 #ifdef CLOCK_THREAD_CPUTIME_ID

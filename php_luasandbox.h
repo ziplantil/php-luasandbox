@@ -59,6 +59,9 @@ PHP_METHOD(LuaSandbox, _internal_getProfilerFunctionReport);
 #else
 PHP_METHOD(LuaSandbox, getProfilerFunctionReport);
 #endif
+#ifdef LUASANDBOX_MEMORY_PROFILING
+PHP_METHOD(LuaSandbox, getProfilerMemoryReport);
+#endif
 PHP_METHOD(LuaSandbox, callFunction);
 PHP_METHOD(LuaSandbox, wrapPhpFunction);
 PHP_METHOD(LuaSandbox, registerLibrary);
