@@ -1719,20 +1719,12 @@ static void luasandbox_update_current_fname(lua_Debug * dbg, php_luasandbox_obj 
 {
 	// is this module code?
 	if (strncmp(dbg->short_src, "Mod", 3)) return;
-	strncpy(sandbox->current_fname, dbg->short_src, 100);
-        strcat(sandbox->current_fname, " : ");
 	if (*dbg->namewhat)
-	        strncat(sandbox->current_fname, dbg->name, 100);
+		snprintf(sandbox->current_fname, 250, "%s : %s",
+				dbg->short_src, dbg->name);
 	else
-	{
-		strcat(sandbox->current_fname, "<");
-		strcat(sandbox->current_fname, dbg->what);
-		strcat(sandbox->current_fname, " at line ");
-		char tempbuf[14];
-		sprintf(tempbuf, "%d", dbg->linedefined);
-		strcat(sandbox->current_fname, tempbuf);
-		strcat(sandbox->current_fname, ">");
-	}
+		snprintf(sandbox->current_fname, 250, "%s : <%s at line %d>",
+				dbg->short_src, dbg->what, dbg->linedefined);
 }
 
 static void luasandbox_memory_hook(lua_State *L, lua_Debug *ar)
